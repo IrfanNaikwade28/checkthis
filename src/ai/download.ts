@@ -31,16 +31,24 @@ const DEFAULT_RETRY_DELAY_MS = 2000;
 const CHUNK_SIZE = 64 * 1024; // 64 KB chunks
 
 export class DownloadError extends Error {
-  constructor(message: string, public readonly code: string) {
+  readonly code: string;
+
+  constructor(message: string, code: string) {
     super(message);
     this.name = "DownloadError";
+    this.code = code;
   }
 }
 
 export class ChecksumError extends Error {
-  constructor(message: string, public readonly expected: string, public readonly actual: string) {
+  readonly expected: string;
+  readonly actual: string;
+
+  constructor(message: string, expected: string, actual: string) {
     super(message);
     this.name = "ChecksumError";
+    this.expected = expected;
+    this.actual = actual;
   }
 }
 

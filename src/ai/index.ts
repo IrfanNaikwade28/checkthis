@@ -62,3 +62,9 @@ export {
   LLAMA_CPP_VERSION,
 } from "./installer.ts";
 export type { InstallResult, InstallProgress } from "./installer.ts";
+
+// Inference
+export {
+  InferenceError,
+  LlamaCppProvider,
+} from "./inference.ts";
