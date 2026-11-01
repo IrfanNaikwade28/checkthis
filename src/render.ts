@@ -1,4 +1,4 @@
-import { ExplainResult, RenderOptions } from "./types.ts";
+import { ExplainResult, RenderOptions, DirectoryEntry } from "./types.ts";
 
 const COLOR_SUPPORTED =
   process.stdout.isTTY &&
@@ -80,6 +80,71 @@ export function render(result: ExplainResult, options: RenderOptions = {}): stri
   // Remove trailing blank line
   while (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
+  }
+
+  return lines.join("\n");
+}
+
+function formatTreeEntry(
+  entry: DirectoryEntry,
+  isLast: boolean,
+  color: boolean
+): string {
+  let name = entry.name;
+
+  if (entry.kind === "directory") {
+    name += "/";
+  }
+
+  if (entry.kind === "symlink" && entry.target) {
+    name += ` -> ${entry.target}`;
+  }
+
+  const connector = isLast ? "└── " : "├── ";
+  const colorizedConnector = colorize(connector, ANSI.dim, color);
+  const colorizedName = colorize(name, ANSI.reset, color);
+
+  return `${colorizedConnector}${colorizedName}`;
+}
+
+function buildTreeLines(
+  entry: DirectoryEntry,
+  prefix: string,
+  color: boolean,
+  lines: string[]
+): void {
+  const children = entry.children ?? [];
+  const lastIndex = children.length - 1;
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const isLast = i === lastIndex;
+
+    lines.push(`${prefix}${formatTreeEntry(child, isLast, color)}`);
+
+    if (child.kind === "directory" && child.children) {
+      const extension = isLast ? "    " : "│   ";
+      buildTreeLines(child, prefix + extension, color, lines);
+    }
+  }
+}
+
+export function renderTree(
+  root: DirectoryEntry,
+  options: RenderOptions = {}
+): string {
+  const color = resolveColor(options);
+  const lines: string[] = [];
+
+  // Root directory name
+  let rootName = root.name;
+  if (root.kind === "directory") {
+    rootName += "/";
+  }
+  lines.push(colorize(rootName, ANSI.bold, color));
+
+  if (root.children) {
+    buildTreeLines(root, "", color, lines);
   }
 
   return lines.join("\n");

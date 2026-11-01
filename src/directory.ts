@@ -6,6 +6,7 @@ import {
   AnalyzeOptions,
   InaccessibleEntry,
   FileInspection,
+  DirectoryEntry,
 } from "./types.ts";
 import { inspectPath } from "./inspect.ts";
 import { getExtension, isHidden } from "./utils.ts";
@@ -23,6 +24,7 @@ async function analyzeDirectory(
     maxDepth = DEFAULT_MAX_DEPTH,
     followSymlinks = false,
     includeHidden = true,
+    tree = false,
   } = options;
 
   const absolutePath = path.resolve(dirPath);
@@ -46,6 +48,7 @@ async function analyzeDirectory(
     directoryCount: number;
     totalSize: number;
     extensionDistribution: Record<string, number>;
+    children?: DirectoryEntry[];
   }> {
     if (currentDepth > maxDepth) {
       scanComplete = false;
@@ -93,10 +96,20 @@ async function analyzeDirectory(
       return { fileCount: 0, directoryCount: 0, totalSize: 0, extensionDistribution: {} };
     }
 
+    // Deterministic sort: directories first, then alphabetical by name
+    entries.sort((a, b) => {
+      const aIsDir = a.isDirectory();
+      const bIsDir = b.isDirectory();
+      if (aIsDir && !bIsDir) return -1;
+      if (!aIsDir && bIsDir) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
     let fileCount = 0;
     let directoryCount = 0;
     let totalSize = 0;
     const extensionDistribution: Record<string, number> = {};
+    const children: DirectoryEntry[] = [];
 
     for (const entry of entries) {
       if (entryCount >= maxEntries) {
@@ -123,11 +136,34 @@ async function analyzeDirectory(
         const stat = await fs.lstat(fullPath);
 
         if (stat.isSymbolicLink()) {
-          // Symlinks are not counted as regular files and not traversed recursively
+          const entryNode: DirectoryEntry = {
+            kind: "symlink",
+            name: entry.name,
+            path: fullPath,
+            absolutePath: fullPath,
+            isHidden: isHidden(fullPath),
+            isSymlink: true,
+            target: undefined,
+          };
+
+          try {
+            entryNode.target = await fs.readlink(fullPath);
+          } catch {
+            // readlink failed; target remains undefined
+          }
+
+          // In tree view, symlinks are always leaf nodes — never traversed,
+          // regardless of followSymlinks setting.
+          if (tree) {
+            children.push(entryNode);
+            continue;
+          }
+
           if (!followSymlinks) {
             continue;
           }
-          // If following symlinks, check for loops and recurse
+
+          // If following symlinks (non-tree mode only), check for loops and recurse
           let linkTarget: string;
           try {
             linkTarget = await fs.readlink(fullPath);
@@ -163,6 +199,14 @@ async function analyzeDirectory(
 
         if (stat.isDirectory()) {
           directoryCount++;
+          const entryNode: DirectoryEntry = {
+            kind: "directory",
+            name: entry.name,
+            path: fullPath,
+            absolutePath: fullPath,
+            isHidden: isHidden(fullPath),
+            isSymlink: false,
+          };
           const result = await walk(fullPath, currentDepth + 1);
           fileCount += result.fileCount;
           directoryCount += result.directoryCount;
@@ -170,11 +214,28 @@ async function analyzeDirectory(
           for (const [ext, count] of Object.entries(result.extensionDistribution)) {
             extensionDistribution[ext] = (extensionDistribution[ext] ?? 0) + count;
           }
+          if (tree && result.children) {
+            entryNode.children = result.children;
+          }
+          if (tree) {
+            children.push(entryNode);
+          }
         } else if (stat.isFile()) {
           fileCount++;
           totalSize += stat.size;
           const ext = getExtension(fullPath);
           extensionDistribution[ext] = (extensionDistribution[ext] ?? 0) + 1;
+          if (tree) {
+            children.push({
+              kind: "file",
+              name: entry.name,
+              path: fullPath,
+              absolutePath: fullPath,
+              isHidden: isHidden(fullPath),
+              isSymlink: false,
+              size: stat.size,
+            });
+          }
         }
       } catch (err) {
         const error = err as NodeJS.ErrnoException;
@@ -184,10 +245,22 @@ async function analyzeDirectory(
           message: error.message,
         });
         scanComplete = false;
+        if (tree) {
+          children.push({
+            kind: "file",
+            name: entry.name,
+            path: fullPath,
+            absolutePath: fullPath,
+            isHidden: isHidden(fullPath),
+            isSymlink: false,
+            inaccessible: [{ path: fullPath, reason: "other", message: error.message }],
+            warnings: [error.message],
+          });
+        }
       }
     }
 
-    return { fileCount, directoryCount, totalSize, extensionDistribution };
+    return { fileCount, directoryCount, totalSize, extensionDistribution, children: tree ? children : undefined };
   }
 
   const result = await walk(absolutePath, 0);
@@ -209,6 +282,10 @@ async function analyzeDirectory(
     scanComplete,
     warnings,
   };
+
+  if (tree && result.children) {
+    entry.children = result.children;
+  }
 
   return entry;
 }

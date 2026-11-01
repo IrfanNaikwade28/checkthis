@@ -2,8 +2,11 @@ import * as fs from "fs/promises";
 import { inspectPath } from "./inspect.ts";
 import { analyzeDirectory } from "./directory.ts";
 import { explain } from "./explain.ts";
-import { render } from "./render.ts";
-import { InspectPathResult } from "./types.ts";
+import { render, renderTree } from "./render.ts";
+import {
+  InspectPathResult,
+  DirectoryStats,
+} from "./types.ts";
 
 const VERSION = "0.1.0";
 
@@ -12,6 +15,7 @@ interface ParsedArgs {
   help: boolean;
   version: boolean;
   color: boolean;
+  tree: boolean;
   error: string | null;
 }
 
@@ -20,6 +24,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let help = false;
   let version = false;
   let color = true;
+  let tree = false;
   let error: string | null = null;
 
   for (let i = 2; i < argv.length; i++) {
@@ -34,6 +39,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg.startsWith("--color=")) {
       const val = arg.slice("--color=".length);
       color = val !== "false";
+    } else if (arg === "--tree") {
+      tree = true;
+    } else if (arg.startsWith("--")) {
+      // Long option not recognized
+      error = `Unknown option: ${arg}`;
+      break;
     } else if (arg.startsWith("-") && arg.length > 1) {
       // Combined short flags like -hv
       for (let j = 1; j < arg.length; j++) {
@@ -53,7 +64,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { path, help, version, color, error };
+  return { path, help, version, color, tree, error };
 }
 
 function printHelp(): void {
@@ -78,7 +89,8 @@ function printVersion(): void {
 
 async function inspect(
   filePath: string,
-  color: boolean
+  color: boolean,
+  tree: boolean
 ): Promise<void> {
   let result: InspectPathResult;
 
@@ -86,7 +98,14 @@ async function inspect(
     const stat = await fs.lstat(filePath);
 
     if (stat.isDirectory()) {
-      const dirStats = await analyzeDirectory(filePath);
+      const dirStats = await analyzeDirectory(filePath, { tree });
+
+      if (tree) {
+        const output = renderTree(dirStats, { color });
+        console.log(output);
+        return;
+      }
+
       result = {
         entry: dirStats,
         explanation: { summary: "", facts: [], assumptions: [] },
@@ -133,5 +152,5 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  await inspect(args.path, args.color);
+  await inspect(args.path, args.color, args.tree);
 }

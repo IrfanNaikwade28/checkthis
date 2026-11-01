@@ -63,10 +63,42 @@ describe("CLI argument parsing", () => {
     assert.strictEqual(args.error, null);
   });
 
-  it("parses combined short flags -hv", () => {
-    const args = parseArgs(["node", "checkthis", "-hv"]);
-    assert.strictEqual(args.help, true);
-    assert.strictEqual(args.version, true);
+  it("parses --tree", () => {
+    const args = parseArgs(["node", "checkthis", "--tree", "./src"]);
+    assert.strictEqual(args.tree, true);
+    assert.strictEqual(args.path, "./src");
+    assert.strictEqual(args.error, null);
+  });
+
+  it("parses --tree after path", () => {
+    const args = parseArgs(["node", "checkthis", "./src", "--tree"]);
+    assert.strictEqual(args.tree, true);
+    assert.strictEqual(args.path, "./src");
+    assert.strictEqual(args.error, null);
+  });
+
+  it("reports unknown long option with full name", () => {
+    const args = parseArgs(["node", "checkthis", "--bogus"]);
+    assert.strictEqual(args.error, "Unknown option: --bogus");
+  });
+
+  it("reports unknown long option with full name after path", () => {
+    const args = parseArgs(["node", "checkthis", "./src", "--bogus"]);
+    assert.strictEqual(args.error, "Unknown option: --bogus");
+  });
+
+  it("does not misparse --tree as unknown short flag", () => {
+    const args = parseArgs(["node", "checkthis", "--tree", "./src"]);
+    assert.strictEqual(args.error, null);
+    assert.strictEqual(args.tree, true);
+  });
+
+  it("parses --tree with --no-color", () => {
+    const args = parseArgs(["node", "checkthis", "--tree", "--no-color", "./src"]);
+    assert.strictEqual(args.tree, true);
+    assert.strictEqual(args.color, false);
+    assert.strictEqual(args.path, "./src");
+    assert.strictEqual(args.error, null);
   });
 });
 
@@ -138,5 +170,28 @@ describe("CLI subprocess", () => {
     const result = await runCli(["/nonexistent/path/file.txt"]);
     assert.strictEqual(result.code, 1);
     assert.ok(result.stderr.includes("Error:"));
+  });
+
+  it("renders tree with --tree before path", async () => {
+    const result = await runCli(["--tree", "src"]);
+    assert.strictEqual(result.code, 0);
+    assert.ok(result.stdout.includes("src/"));
+    assert.ok(result.stdout.includes("├──"));
+    assert.ok(result.stdout.includes("└──"));
+  });
+
+  it("renders tree with --tree after path", async () => {
+    const result = await runCli(["src", "--tree"]);
+    assert.strictEqual(result.code, 0);
+    assert.ok(result.stdout.includes("src/"));
+    assert.ok(result.stdout.includes("├──"));
+    assert.ok(result.stdout.includes("└──"));
+  });
+
+  it("renders tree without colors with --tree --no-color", async () => {
+    const result = await runCli(["--tree", "--no-color", "src"]);
+    assert.strictEqual(result.code, 0);
+    assert.ok(!result.stdout.includes("\x1b["));
+    assert.ok(result.stdout.includes("src/"));
   });
 });

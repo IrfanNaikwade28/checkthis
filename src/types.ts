@@ -50,6 +50,13 @@ export interface InaccessibleEntry {
   message: string;
 }
 
+export interface DirectoryEntry extends BaseEntry {
+  size?: number;
+  children?: DirectoryEntry[];
+  inaccessible?: InaccessibleEntry[];
+  warnings?: string[];
+}
+
 export interface DirectoryStats extends BaseEntry {
   kind: "directory";
   fileCount: number;
@@ -61,6 +68,7 @@ export interface DirectoryStats extends BaseEntry {
   symlinkLoopCount: number;
   scanComplete: boolean;
   warnings: string[];
+  children?: DirectoryEntry[];
 }
 
 export interface ProjectDetection {
@@ -95,6 +103,7 @@ export interface AnalyzeOptions {
   maxDepth?: number;
   followSymlinks?: boolean;
   includeHidden?: boolean;
+  tree?: boolean;
 }
 
 export interface RenderOptions {
