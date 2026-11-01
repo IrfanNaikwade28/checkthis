@@ -2,7 +2,7 @@
 export { inspectPath } from "./inspect.ts";
 export { analyzeDirectory } from "./directory.ts";
 export { explain } from "./explain.ts";
-export { render, renderTree } from "./render.ts";
+export { render, renderTree, toJson } from "./render.ts";
 export { formatSize } from "./utils.ts";
 
 // Public types

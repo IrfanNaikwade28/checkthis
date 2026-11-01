@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { render, renderTree } from "../dist/render.js";
+import { render, renderTree, toJson } from "../dist/render.js";
 
 describe("render", () => {
   describe("file output", () => {
@@ -206,6 +206,296 @@ describe("render", () => {
       const second = render(result);
 
       assert.strictEqual(first, second);
+    });
+  });
+
+  describe("JSON serialization", () => {
+    it("serializes a file inspection result to valid JSON", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "file",
+          name: "app.ts",
+          path: "/home/user/app.ts",
+          absolutePath: "/home/user/app.ts",
+          isHidden: false,
+          isSymlink: false,
+          extension: ".ts",
+          size: 42,
+          modifiedAt: new Date("2026-10-31T14:22:10Z"),
+          category: "text",
+          readable: true,
+        },
+        explanation: {
+          summary: "app.ts — file, 42.00 B",
+          facts: ["Name: app.ts", "Size: 42.00 B"],
+          assumptions: ['The ".ts" extension typically indicates a plain-text file.'],
+        },
+      };
+
+      const json = toJson(result);
+
+      // Valid JSON
+      const parsed = JSON.parse(json);
+      assert.strictEqual(parsed.entry.name, "app.ts");
+      assert.strictEqual(parsed.entry.kind, "file");
+      assert.strictEqual(parsed.entry.size, 42);
+      assert.strictEqual(parsed.entry.category, "text");
+      assert.strictEqual(parsed.explanation.summary, "app.ts — file, 42.00 B");
+      assert.strictEqual(parsed.explanation.facts.length, 2);
+      assert.strictEqual(parsed.explanation.assumptions.length, 1);
+    });
+
+    it("serializes a directory inspection result to valid JSON", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "directory",
+          name: "src",
+          path: "/home/user/src",
+          absolutePath: "/home/user/src",
+          isHidden: false,
+          isSymlink: false,
+          fileCount: 3,
+          directoryCount: 1,
+          totalSize: 1024,
+          empty: false,
+          extensionDistribution: { ".ts": 2, ".js": 1 },
+          inaccessible: [],
+          symlinkLoopCount: 0,
+          scanComplete: true,
+          warnings: [],
+        },
+        explanation: {
+          summary: "src — 3 files, 1 directories, 1.00 KB",
+          facts: ["Files: 3", "Subdirectories: 1"],
+          assumptions: [],
+        },
+      };
+
+      const json = toJson(result);
+      const parsed = JSON.parse(json);
+
+      assert.strictEqual(parsed.entry.kind, "directory");
+      assert.strictEqual(parsed.entry.fileCount, 3);
+      assert.strictEqual(parsed.entry.directoryCount, 1);
+      assert.strictEqual(parsed.entry.totalSize, 1024);
+      assert.strictEqual(parsed.entry.empty, false);
+      assert.strictEqual(parsed.entry.scanComplete, true);
+      assert.deepStrictEqual(parsed.entry.extensionDistribution, {
+        ".ts": 2,
+        ".js": 1,
+      });
+    });
+
+    it("includes optional error field when present", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "file",
+          name: "missing.txt",
+          path: "/nonexistent/missing.txt",
+          absolutePath: "/nonexistent/missing.txt",
+          isHidden: false,
+          isSymlink: false,
+          extension: ".txt",
+          size: 0,
+          modifiedAt: new Date(),
+          category: "unknown",
+          readable: false,
+          error: {
+            code: "ENOENT",
+            message: "no such file or directory",
+            path: "/nonexistent/missing.txt",
+            recoverable: true,
+          },
+        },
+        explanation: {
+          summary: "Unable to inspect missing.txt",
+          facts: ["ENOENT: no such file or directory"],
+          assumptions: [],
+        },
+      };
+
+      const json = toJson(result);
+      const parsed = JSON.parse(json);
+
+      assert.ok(parsed.entry.error);
+      assert.strictEqual(parsed.entry.error.code, "ENOENT");
+      assert.strictEqual(parsed.entry.error.recoverable, true);
+      assert.strictEqual(parsed.entry.readable, false);
+    });
+
+    it("includes optional symlink target field", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "symlink",
+          name: "link.txt",
+          path: "/home/user/link.txt",
+          absolutePath: "/home/user/link.txt",
+          isHidden: false,
+          isSymlink: true,
+          target: "/home/user/target.txt",
+          extension: ".txt",
+          size: 0,
+          modifiedAt: new Date(),
+          category: "text",
+          readable: true,
+        },
+        explanation: {
+          summary: "link.txt — symlink, 0 B",
+          facts: ["Symbolic link target: /home/user/target.txt"],
+          assumptions: [],
+        },
+      };
+
+      const json = toJson(result);
+      const parsed = JSON.parse(json);
+
+      assert.strictEqual(parsed.entry.kind, "symlink");
+      assert.strictEqual(parsed.entry.target, "/home/user/target.txt");
+    });
+
+    it("includes optional contentPreview field", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "file",
+          name: "readme.md",
+          path: "/home/user/readme.md",
+          absolutePath: "/home/user/readme.md",
+          isHidden: false,
+          isSymlink: false,
+          extension: ".md",
+          size: 11,
+          modifiedAt: new Date(),
+          category: "text",
+          readable: true,
+          contentPreview: "# Hello",
+        },
+        explanation: {
+          summary: "readme.md — file, 11.00 B",
+          facts: ["Extension: .md"],
+          assumptions: [],
+        },
+      };
+
+      const json = toJson(result);
+      const parsed = JSON.parse(json);
+
+      assert.strictEqual(parsed.entry.contentPreview, "# Hello");
+    });
+
+    it("produces pretty-printed JSON with 2-space indentation", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "file",
+          name: "test.txt",
+          path: "/tmp/test.txt",
+          absolutePath: "/tmp/test.txt",
+          isHidden: false,
+          isSymlink: false,
+          extension: ".txt",
+          size: 0,
+          modifiedAt: new Date(),
+          category: "text",
+          readable: true,
+        },
+        explanation: {
+          summary: "test.txt — file, 0 B",
+          facts: [],
+          assumptions: [],
+        },
+      };
+
+      const json = toJson(result);
+
+      // Check indentation pattern
+      assert.ok(json.includes('  "entry"'));
+      assert.ok(json.includes('    "kind"'));
+      assert.ok(!json.includes("\\t")); // No tabs
+    });
+
+    it("does not mutate the input result", () => {
+      const originalEntry = {
+        kind: "file" as const,
+        name: "test.txt",
+        path: "/tmp/test.txt",
+        absolutePath: "/tmp/test.txt",
+        isHidden: false,
+        isSymlink: false,
+        extension: ".txt",
+        size: 100,
+        modifiedAt: new Date(),
+        category: "text",
+        readable: true,
+      };
+      const result: InspectPathResultInput = {
+        entry: originalEntry,
+        explanation: { summary: "test", facts: [], assumptions: [] },
+      };
+
+      const originalStr = JSON.stringify(result);
+      toJson(result);
+      const afterStr = JSON.stringify(result);
+
+      assert.strictEqual(originalStr, afterStr);
+    });
+
+    it("escapes special characters in strings", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "file",
+          name: 'file"with"quotes.txt',
+          path: '/path/with\\backslashes',
+          absolutePath: '/path/with\\backslashes',
+          isHidden: false,
+          isSymlink: false,
+          extension: ".txt",
+          size: 0,
+          modifiedAt: new Date(),
+          category: "text",
+          readable: true,
+        },
+        explanation: {
+          summary: 'summary with "quotes" and newline',
+          facts: ["fact with \\t tab"],
+          assumptions: [],
+        },
+      };
+
+      const json = toJson(result);
+      // Should not throw and should round-trip correctly
+      const parsed = JSON.parse(json);
+      assert.strictEqual(parsed.entry.name, 'file"with"quotes.txt');
+      assert.strictEqual(parsed.explanation.summary, 'summary with "quotes" and newline');
+    });
+
+    it("includes optional recommendations field when present", () => {
+      const result: InspectPathResultInput = {
+        entry: {
+          kind: "file",
+          name: "test.txt",
+          path: "/tmp/test.txt",
+          absolutePath: "/tmp/test.txt",
+          isHidden: false,
+          isSymlink: false,
+          extension: ".txt",
+          size: 0,
+          modifiedAt: new Date(),
+          category: "text",
+          readable: true,
+        },
+        explanation: {
+          summary: "test.txt — file, 0 B",
+          facts: [],
+          assumptions: [],
+          recommendations: ["Consider adding more content"],
+        },
+      };
+
+      const json = toJson(result);
+      const parsed = JSON.parse(json);
+
+      assert.deepStrictEqual(parsed.explanation.recommendations, [
+        "Consider adding more content",
+      ]);
     });
   });
 
@@ -539,4 +829,68 @@ type DirectoryEntryInput = {
   children?: DirectoryEntryInput[];
   inaccessible?: never[];
   warnings?: never[];
+};
+
+type InspectPathResultInput = {
+  entry: FileInspectionInput | DirectoryStatsInput;
+  explanation: ExplainResultInput;
+  project?: ProjectDetectionInput;
+};
+
+type FileInspectionInput = {
+  kind: "file" | "directory" | "symlink";
+  name: string;
+  path: string;
+  absolutePath: string;
+  isHidden: boolean;
+  isSymlink: boolean;
+  target?: string;
+  extension?: string;
+  size?: number;
+  modifiedAt?: Date;
+  category?: "text" | "binary" | "image" | "audio" | "video" | "unknown";
+  readable?: boolean;
+  contentPreview?: string;
+  error?: InspectionErrorInput;
+};
+
+type DirectoryStatsInput = {
+  kind: "directory";
+  name: string;
+  path: string;
+  absolutePath: string;
+  isHidden: boolean;
+  isSymlink: boolean;
+  target?: string;
+  fileCount: number;
+  directoryCount: number;
+  totalSize: number;
+  empty: boolean;
+  extensionDistribution: Record<string, number>;
+  inaccessible: InaccessibleEntryInput[];
+  symlinkLoopCount: number;
+  scanComplete: boolean;
+  warnings: string[];
+  children?: unknown;
+};
+
+type InaccessibleEntryInput = {
+  path: string;
+  reason: "permission" | "missing" | "loop" | "other";
+  message: string;
+};
+
+type InspectionErrorInput = {
+  code: string;
+  message: string;
+  path: string;
+  recoverable: boolean;
+};
+
+type ProjectDetectionInput = {
+  detected: boolean;
+  type: "node" | "python" | "rust" | "go" | "java" | "unknown";
+  markers: string[];
+  languages: string[];
+  confidence: "low" | "medium" | "high";
 };

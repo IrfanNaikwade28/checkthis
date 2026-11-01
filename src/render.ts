@@ -1,4 +1,9 @@
-import { ExplainResult, RenderOptions, DirectoryEntry } from "./types.ts";
+import {
+  ExplainResult,
+  RenderOptions,
+  DirectoryEntry,
+  InspectPathResult,
+} from "./types.ts";
 
 const COLOR_SUPPORTED =
   process.stdout.isTTY &&
@@ -151,3 +156,11 @@ export function renderTree(
 }
 
 export { colorize, heading, label, value, warning, error, bullet };
+
+/**
+ * Serialize an InspectPathResult to pretty-printed JSON.
+ * Does not mutate the input result.
+ */
+export function toJson(result: InspectPathResult): string {
+  return JSON.stringify(result, null, 2);
+}

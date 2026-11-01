@@ -5,6 +5,8 @@ import {
   analyzeDirectory,
   explain,
   render,
+  renderTree,
+  toJson,
   formatSize,
 } from "../dist/index.js";
 import type {
@@ -50,6 +52,42 @@ describe("public API (src/index.ts)", () => {
       assumptions: [],
     });
     assert.ok(output.includes("test.txt — file, 10.00 B"));
+  });
+
+  it("exports toJson function", () => {
+    assert.strictEqual(typeof toJson, "function");
+  });
+
+  it("exports renderTree function", () => {
+    assert.strictEqual(typeof renderTree, "function");
+  });
+
+  it("serializes to valid JSON via public API", () => {
+    const output = toJson({
+      entry: {
+        kind: "file",
+        name: "test.txt",
+        path: "/tmp/test.txt",
+        absolutePath: "/tmp/test.txt",
+        isHidden: false,
+        isSymlink: false,
+        extension: ".txt",
+        size: 42,
+        modifiedAt: new Date("2026-10-31T14:22:10Z"),
+        category: "text",
+        readable: true,
+      },
+      explanation: {
+        summary: "test.txt — file, 42 B",
+        facts: ["Size: 42"],
+        assumptions: [],
+      },
+    });
+
+    const parsed = JSON.parse(output);
+    assert.strictEqual(parsed.entry.name, "test.txt");
+    assert.strictEqual(parsed.entry.size, 42);
+    assert.strictEqual(parsed.explanation.summary, "test.txt — file, 42 B");
   });
 
   it("exports types usable at compile time", () => {

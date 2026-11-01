@@ -1,8 +1,9 @@
 import * as fs from "fs/promises";
+import * as path from "path";
 import { inspectPath } from "./inspect.ts";
 import { analyzeDirectory } from "./directory.ts";
 import { explain } from "./explain.ts";
-import { render, renderTree } from "./render.ts";
+import { render, renderTree, toJson } from "./render.ts";
 import {
   InspectPathResult,
   DirectoryStats,
@@ -16,6 +17,7 @@ interface ParsedArgs {
   version: boolean;
   color: boolean;
   tree: boolean;
+  json: boolean;
   error: string | null;
 }
 
@@ -25,6 +27,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let version = false;
   let color = true;
   let tree = false;
+  let json = false;
   let error: string | null = null;
 
   for (let i = 2; i < argv.length; i++) {
@@ -41,6 +44,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       color = val !== "false";
     } else if (arg === "--tree") {
       tree = true;
+    } else if (arg === "--json") {
+      json = true;
     } else if (arg.startsWith("--")) {
       // Long option not recognized
       error = `Unknown option: ${arg}`;
@@ -64,7 +69,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { path, help, version, color, tree, error };
+  // --json and --tree are mutually exclusive
+  if (json && tree) {
+    error = "Cannot use --json and --tree together";
+  }
+
+  return { path, help, version, color, tree, json, error };
 }
 
 function printHelp(): void {
@@ -76,11 +86,15 @@ function printHelp(): void {
   console.log("  -h, --help       Show this help message");
   console.log("  -v, --version    Show version number");
   console.log("  --no-color       Disable colored output");
+  console.log("  --tree           Display directory contents as a tree");
+  console.log("  --json           Output machine-readable JSON");
   console.log("");
   console.log("Examples:");
   console.log("  checkthis README.md");
   console.log("  checkthis ./src");
   console.log("  checkthis .");
+  console.log("  checkthis --tree .");
+  console.log("  checkthis --json .");
 }
 
 function printVersion(): void {
@@ -90,7 +104,8 @@ function printVersion(): void {
 async function inspect(
   filePath: string,
   color: boolean,
-  tree: boolean
+  tree: boolean,
+  json: boolean
 ): Promise<void> {
   let result: InspectPathResult;
 
@@ -99,6 +114,11 @@ async function inspect(
 
     if (stat.isDirectory()) {
       const dirStats = await analyzeDirectory(filePath, { tree });
+
+      if (json) {
+        console.log(toJson({ entry: dirStats, explanation: { summary: "", facts: [], assumptions: [] } }));
+        return;
+      }
 
       if (tree) {
         const output = renderTree(dirStats, { color });
@@ -114,9 +134,46 @@ async function inspect(
       result = await inspectPath(filePath, { followSymlinks: false });
     }
   } catch (err) {
+    if (json) {
+      const error = err as NodeJS.ErrnoException;
+      console.log(
+        toJson({
+          entry: {
+            kind: "file",
+            name: path.basename(filePath),
+            path: filePath,
+            absolutePath: path.resolve(filePath),
+            isHidden: false,
+            isSymlink: false,
+            extension: "",
+            size: 0,
+            modifiedAt: new Date(),
+            category: "unknown",
+            readable: false,
+            error: {
+              code: error.code ?? "UNKNOWN",
+              message: error.message,
+              path: filePath,
+              recoverable: error.code === "ENOENT" || error.code === "EACCES",
+            },
+          },
+          explanation: {
+            summary: `Unable to inspect ${path.basename(filePath)}`,
+            facts: [`${error.code}: ${error.message}`],
+            assumptions: [],
+          },
+        })
+      );
+      process.exit(1);
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Error: ${message}`);
     process.exit(1);
+  }
+
+  if (json) {
+    console.log(toJson(result));
+    return;
   }
 
   const explanation = explain(result);
@@ -152,5 +209,5 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  await inspect(args.path, args.color, args.tree);
+  await inspect(args.path, args.color, args.tree, args.json);
 }
