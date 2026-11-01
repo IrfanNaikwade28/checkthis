@@ -256,8 +256,8 @@ describe("CLI subprocess", () => {
     const parsed = JSON.parse(result.stdout);
     assert.strictEqual(parsed.entry.name, "src");
     assert.strictEqual(parsed.entry.kind, "directory");
-    assert.strictEqual(parsed.entry.fileCount, 9);
-    assert.strictEqual(parsed.entry.extensionDistribution[".ts"], 9);
+    assert.strictEqual(parsed.entry.fileCount, 17);
+    assert.strictEqual(parsed.entry.extensionDistribution[".ts"], 17);
     assert.ok(!result.stdout.includes("\x1b["));
   });
 
