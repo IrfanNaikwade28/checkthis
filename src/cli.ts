@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { inspectPath } from "./inspect.ts";
+import { detectProject } from "./project.ts";
 import { analyzeDirectory } from "./directory.ts";
 import { explain } from "./explain.ts";
 import { render, renderTree, toJson } from "./render.ts";
@@ -114,9 +115,10 @@ async function inspect(
 
     if (stat.isDirectory()) {
       const dirStats = await analyzeDirectory(filePath, { tree });
+      const project = await detectProject(filePath);
 
       if (json) {
-        console.log(toJson({ entry: dirStats, explanation: { summary: "", facts: [], assumptions: [] } }));
+        console.log(toJson({ entry: dirStats, explanation: { summary: "", facts: [], assumptions: [] }, project }));
         return;
       }
 
@@ -128,6 +130,7 @@ async function inspect(
 
       result = {
         entry: dirStats,
+        project,
         explanation: { summary: "", facts: [], assumptions: [] },
       };
     } else {

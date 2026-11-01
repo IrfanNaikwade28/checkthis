@@ -9,7 +9,12 @@ import {
   InspectionError,
   EntryKind,
 } from "./types.ts";
-import { getExtension, isHidden, isTextExtension } from "./utils.ts";
+import {
+  getExtension,
+  isHidden,
+  isTextExtension,
+} from "./utils.ts";
+import { detectProject } from "./project.ts";
 
 const DEFAULT_MAX_CONTENT_SIZE = 1024 * 1024; // 1 MB
 const DEFAULT_MAX_PREVIEW_BYTES = 8 * 1024; // 8 KB
@@ -116,8 +121,12 @@ async function inspectPath(
       scanComplete: true,
       warnings: [],
     };
+
+    const project = await detectProject(filePath);
+
     return {
       entry,
+      project,
       explanation: {
         summary: `${name} is a directory`,
         facts: [`Type: directory`, `Size: 0 bytes (directory metadata only)`],

@@ -74,8 +74,11 @@ export interface DirectoryStats extends BaseEntry {
 export interface ProjectDetection {
   detected: boolean;
   type: ProjectType;
+  types: ProjectType[];
   markers: string[];
   languages: string[];
+  frameworks: string[];
+  packageManagers: string[];
   confidence: Confidence;
 }
 

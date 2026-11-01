@@ -3,6 +3,7 @@ import {
   ExplainResult,
   FileInspection,
   DirectoryStats,
+  ProjectDetection,
 } from "./types.ts";
 import { formatSize, formatDate } from "./utils.ts";
 
@@ -48,7 +49,10 @@ function explainFile(entry: FileInspection): ExplainResult {
   return { summary, facts, assumptions };
 }
 
-function explainDirectory(entry: DirectoryStats): ExplainResult {
+function explainDirectory(
+  entry: DirectoryStats,
+  project?: ProjectDetection
+): ExplainResult {
   const facts: string[] = [];
   const assumptions: string[] = [];
 
@@ -60,6 +64,24 @@ function explainDirectory(entry: DirectoryStats): ExplainResult {
   facts.push(`Total size: ${formatSize(entry.totalSize)}`);
   facts.push(`Empty: ${entry.empty ? "yes" : "no"}`);
   facts.push(`Scan complete: ${entry.scanComplete ? "yes" : "no"}`);
+
+  // Project detection facts
+  if (project?.detected) {
+    facts.push(`Project type: ${project.type}`);
+    facts.push(`Project confidence: ${project.confidence}`);
+    if (project.markers.length > 0) {
+      facts.push(`Project markers: ${project.markers.join(", ")}`);
+    }
+    if (project.languages.length > 0) {
+      facts.push(`Project languages: ${project.languages.join(", ")}`);
+    }
+    if (project.frameworks.length > 0) {
+      facts.push(`Project frameworks: ${project.frameworks.join(", ")}`);
+    }
+    if (project.packageManagers.length > 0) {
+      facts.push(`Package managers: ${project.packageManagers.join(", ")}`);
+    }
+  }
 
   const distEntries = Object.entries(entry.extensionDistribution);
   if (distEntries.length > 0) {
@@ -105,7 +127,9 @@ function explainDirectory(entry: DirectoryStats): ExplainResult {
     assumptions.push(`This directory is dominated by ${top}.`);
   }
 
-  const summary = `${entry.name} — ${entry.fileCount} files, ${entry.directoryCount} directories, ${formatSize(entry.totalSize)}`;
+  const summary = project?.detected
+    ? `${entry.name} — ${project.type} project (${entry.fileCount} files, ${entry.directoryCount} directories)`
+    : `${entry.name} — ${entry.fileCount} files, ${entry.directoryCount} directories, ${formatSize(entry.totalSize)}`;
 
   return { summary, facts, assumptions };
 }
@@ -117,10 +141,10 @@ function isDirectoryStats(
 }
 
 export function explain(result: InspectPathResult): ExplainResult {
-  const { entry } = result;
+  const { entry, project } = result;
 
   if (isDirectoryStats(entry)) {
-    return explainDirectory(entry);
+    return explainDirectory(entry, project);
   }
 
   return explainFile(entry);
