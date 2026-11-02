@@ -5,7 +5,7 @@ import * as child_process from "child_process";
 import {
   InferenceError,
   LlamaCppProvider,
-} from "../../src/ai/inference.ts";
+} from "../../dist/ai/inference.js";
 
 const MODEL_PATH = "/tmp/checkthis-test/model.gguf";
 const RUNTIME_PATH = "/tmp/checkthis-test/llama-cli";

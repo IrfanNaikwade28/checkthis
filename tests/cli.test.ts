@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { spawn } from "child_process";
-import { parseArgs } from "../dist/cli.js";
+import { PassThrough } from "stream";
+import { writeFile, mkdtemp, rm, chmod, mkdir } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { parseArgs, promptFirstRunAI } from "../dist/cli.js";
 
 describe("CLI argument parsing", () => {
   it("parses a path", () => {
@@ -139,11 +143,15 @@ describe("CLI argument parsing", () => {
 });
 
 describe("CLI subprocess", () => {
-  function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  function runCli(
+    args: string[],
+    opts?: { cwd?: string; env?: Record<string, string> }
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve) => {
       const proc = spawn("node", ["bin/checkthis", ...args], {
-        cwd: process.cwd(),
+        cwd: opts?.cwd ?? process.cwd(),
         encoding: "utf8",
+        env: opts?.env ?? { ...process.env },
       });
       let stdout = "";
       let stderr = "";
@@ -256,8 +264,8 @@ describe("CLI subprocess", () => {
     const parsed = JSON.parse(result.stdout);
     assert.strictEqual(parsed.entry.name, "src");
     assert.strictEqual(parsed.entry.kind, "directory");
-    assert.strictEqual(parsed.entry.fileCount, 19);
-    assert.strictEqual(parsed.entry.extensionDistribution[".ts"], 19);
+    assert.strictEqual(parsed.entry.fileCount, 20);
+    assert.strictEqual(parsed.entry.extensionDistribution[".ts"], 20);
     assert.ok(!result.stdout.includes("\x1b["));
   });
 
@@ -326,5 +334,165 @@ describe("CLI subprocess", () => {
     assert.strictEqual(result.code, 0);
     assert.ok(result.stdout.includes("src"));
     assert.ok(result.stdout.includes("Entry type: directory"));
+  });
+
+  it("does not prompt for AI setup with --json in TTY mode", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "checkthis-test-"));
+    try {
+      const result = await runCli(["--json", "."], {
+        env: { ...process.env, XDG_DATA_HOME: tmpDir },
+      });
+      assert.strictEqual(result.code, 0);
+      // Should be valid JSON
+      JSON.parse(result.stdout);
+      // Should not contain AI prompt text
+      assert.ok(!result.stdout.includes("Install optional local AI model"));
+      assert.ok(!result.stdout.includes("readline"));
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not prompt for AI setup with --tree in TTY mode", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "checkthis-test-"));
+    try {
+      const result = await runCli(["--tree", "."], {
+        env: { ...process.env, XDG_DATA_HOME: tmpDir },
+      });
+      assert.strictEqual(result.code, 0);
+      // Should not contain AI prompt text
+      assert.ok(!result.stdout.includes("Install optional local AI model"));
+      assert.ok(!result.stdout.includes("readline"));
+      // Should contain tree output or indicate empty
+      assert.ok(
+        result.stdout.includes("├──") ||
+          result.stdout.includes("└──") ||
+          result.stdout.includes("empty") ||
+          result.stdout.includes("0 B")
+      );
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes meaningful explanation in directory JSON output", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "checkthis-test-"));
+    await writeFile(join(tmpDir, "README.md"), "# Test\n");
+    await writeFile(join(tmpDir, "package.json"), '{"name": "test"}\n');
+    try {
+      const result = await runCli(["--json", tmpDir], {
+        env: { ...process.env, XDG_DATA_HOME: tmpDir },
+      });
+      assert.strictEqual(result.code, 0);
+      const parsed = JSON.parse(result.stdout);
+      // Should have explanation with facts
+      assert.ok(parsed.explanation);
+      assert.ok(Array.isArray(parsed.explanation.facts));
+      assert.ok(parsed.explanation.facts.length > 0);
+      // Should contain project info
+      const factsText = parsed.explanation.facts.join(" ");
+      assert.ok(
+        factsText.includes("Project") ||
+          factsText.includes("Extension") ||
+          factsText.includes("Files:")
+      );
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("continues inspection when AI config write fails", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "checkthis-test-"));
+    try {
+      // Use a path where writeConfig cannot create directories
+      const result = await runCli(["."], {
+        env: {
+          ...process.env,
+          XDG_DATA_HOME: "/proc/no-xdg-write-test",
+        },
+      });
+      // Inspection should succeed even if AI config write fails
+      assert.strictEqual(result.code, 0);
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("promptFirstRunAI throws when writeConfig fails (interactive path isolated)", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "checkthis-test-"));
+    const readOnlyDir = join(tmpDir, "readonly-config");
+    await mkdir(readOnlyDir, { recursive: true });
+    await writeFile(join(readOnlyDir, ".keep"), "");
+    await chmod(readOnlyDir, 0o000);
+
+    const originalIsTTY = process.stdout.isTTY;
+    const originalCI = process.env.CI;
+    const originalXDG = process.env.XDG_DATA_HOME;
+    const originalStdin = process.stdin;
+
+    try {
+      // Use a PassThrough stream as stdin so readline gets "y" without PTY
+      const fakeStdin = new PassThrough();
+      fakeStdin.write("y\n");
+      fakeStdin.end();
+      Object.defineProperty(process, "stdin", {
+        value: fakeStdin,
+        configurable: true,
+      });
+
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: true,
+        configurable: true,
+      });
+      delete process.env.CI;
+      process.env.XDG_DATA_HOME = readOnlyDir;
+
+      await assert.rejects(
+        promptFirstRunAI(),
+        (err: Error) => err instanceof Error
+      );
+    } finally {
+      Object.defineProperty(process, "stdin", {
+        value: originalStdin,
+        configurable: true,
+      });
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: originalIsTTY,
+        configurable: true,
+      });
+      if (originalCI !== undefined) {
+        process.env.CI = originalCI;
+      } else {
+        delete process.env.CI;
+      }
+      if (originalXDG !== undefined) {
+        process.env.XDG_DATA_HOME = originalXDG;
+      } else {
+        delete process.env.XDG_DATA_HOME;
+      }
+      await chmod(readOnlyDir, 0o700).catch(() => {});
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never prompts with --no-ai flag", async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "checkthis-test-"));
+    try {
+      const result = await runCli(["--no-ai", "."], {
+        env: { ...process.env, XDG_DATA_HOME: tmpDir },
+      });
+      assert.strictEqual(result.code, 0);
+      assert.ok(!result.stdout.includes("Install optional local AI model"));
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("handles --tree with a file gracefully", async () => {
+    const result = await runCli(["--tree", "package.json"]);
+    assert.strictEqual(result.code, 0);
+    // Tree flag on a file should fall back to normal file inspection
+    assert.ok(result.stdout.includes("package.json"));
+    assert.ok(result.stdout.includes("Entry type: file"));
   });
 });

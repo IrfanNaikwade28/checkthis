@@ -7,7 +7,7 @@ import {
   getModelDir,
   getModelPath,
   getConfigDirForTesting,
-} from "../../src/ai/paths.ts";
+} from "../../dist/ai/paths.js";
 
 describe("paths", () => {
   describe("getConfigDirForTesting", () => {

@@ -131,29 +131,11 @@ export async function downloadArtifact(
 
     try {
       await downloadWithResume(artifact, onProgress, signal);
-
-      // Verify checksum
-      const actualHash = await computeSha256(artifact.destination);
-      if (actualHash !== artifact.sha256) {
-        // Remove corrupted file
-        try {
-          await fsPromises.unlink(artifact.destination);
-        } catch {
-          // Ignore cleanup errors
-        }
-        throw new ChecksumError(
-          `Checksum mismatch for ${artifact.name}`,
-          artifact.sha256,
-          actualHash
-        );
-      }
-
-      return; // Success
+      return; // Success — downloadWithResume already verified checksum
     } catch (err) {
       lastError = err as Error;
 
-      // Don't retry checksum errors (file is corrupt, re-download won't help
-      // unless we remove it first - we already removed it above)
+      // Don't retry checksum errors
       if (err instanceof ChecksumError) {
         throw err;
       }
@@ -178,14 +160,24 @@ async function downloadWithResume(
     signal.addEventListener("abort", abortHandler);
   }
 
+  const tempDestination = `${artifact.destination}.tmp`;
+
   try {
-    // Check for partial download to resume
+    // Check for partial download to resume from the destination file
     let startByte = 0;
     try {
       const stat = await fsPromises.stat(artifact.destination);
       startByte = stat.size;
     } catch {
       // File doesn't exist, start from 0
+    }
+
+    // Initialize temp file with existing partial data (if resuming)
+    if (startByte > 0) {
+      const existingData = await fsPromises.readFile(artifact.destination);
+      await fsPromises.writeFile(tempDestination, existingData);
+    } else {
+      await fsPromises.writeFile(tempDestination, "");
     }
 
     const headers: Record<string, string> = {};
@@ -214,40 +206,74 @@ async function downloadWithResume(
       parseInt(res.headers.get("content-length") ?? "0", 10) + startByte;
     let bytesDownloaded = startByte;
 
-    const fileHandle = await fsPromises.open(artifact.destination, "a");
+    // Open temp file for writing at exact offset
+    const fileHandle = await fsPromises.open(tempDestination, "r+");
     const writer = fileHandle.createWriteStream({ start: startByte });
 
     const reader = body.getReader();
 
-    while (true) {
-      if (signal?.aborted) {
-        reader.releaseLock();
-        throw new DownloadError("Download aborted", "ABORTED");
+    try {
+      while (true) {
+        if (signal?.aborted) {
+          reader.releaseLock();
+          throw new DownloadError("Download aborted", "ABORTED");
+        }
+
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Backpressure: wait for drain if write buffer is full
+        const writable = writer.write(value);
+        if (!writable) {
+          await new Promise<void>((resolve) => {
+            writer.once("drain", resolve);
+          });
+        }
+        bytesDownloaded += value.length;
+
+        if (onProgress) {
+          onProgress({
+            bytesDownloaded,
+            totalBytes: totalSize || artifact.size,
+            percentage: totalSize
+              ? Math.round((bytesDownloaded / totalSize) * 100)
+              : 0,
+          });
+        }
       }
 
-      const { done, value } = await reader.read();
-      if (done) break;
+      writer.end();
+      await new Promise<void>((resolve, reject) => {
+        writer.on("finish", resolve);
+        writer.on("error", reject);
+      });
+      await fileHandle.close();
 
-      writer.write(value);
-      bytesDownloaded += value.length;
-
-      if (onProgress) {
-        onProgress({
-          bytesDownloaded,
-          totalBytes: totalSize || artifact.size,
-          percentage: totalSize
-            ? Math.round((bytesDownloaded / totalSize) * 100)
-            : 0,
-        });
+      // Verify checksum of temp file before atomic replacement
+      const actualHash = await computeSha256(tempDestination);
+      if (actualHash !== artifact.sha256) {
+        throw new ChecksumError(
+          `Checksum mismatch for ${artifact.name}`,
+          artifact.sha256,
+          actualHash
+        );
       }
+
+      // Atomically replace destination with verified temp file
+      await fsPromises.rename(tempDestination, artifact.destination);
+    } finally {
+      await fileHandle.close().catch(() => {
+        // Ignore close errors during cleanup
+      });
     }
-
-    writer.end();
-    await new Promise<void>((resolve, reject) => {
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
-    await fileHandle.close();
+  } catch (err) {
+    // Clean up temp file on any failure
+    try {
+      await fsPromises.unlink(tempDestination);
+    } catch {
+      // Ignore if already removed or doesn't exist
+    }
+    throw err;
   } finally {
     if (signal) {
       signal.removeEventListener("abort", abortHandler);

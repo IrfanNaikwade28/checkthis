@@ -27,6 +27,9 @@ import { getAIStatus } from "./status.ts";
 
 export const LLAMA_CPP_VERSION = "v0.8.0";
 
+/** Overall timeout for the complete setup operation (10 minutes). */
+export const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+
 // Model artifact: Qwen2.5-0.5B-Instruct Q4_K_M GGUF
 // Verified against Hugging Face API for bartowski/Qwen2.5-0.5B-Instruct-GGUF
 // Source commit: 41ba88dbac95fed2528c92514c131d73eb5a174b
@@ -104,9 +107,29 @@ export async function runSetup(
     signal?: AbortSignal;
   } = {}
 ): Promise<InstallResult> {
-  const { onProgress, signal } = options;
+  const { onProgress, signal: externalSignal } = options;
 
-  try {
+  const timeoutController = new AbortController();
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  const cleanup = () => {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+  };
+
+  // If the external signal aborts, propagate to the timeout controller
+  // so the download is cancelled. If the timeout fires first, it aborts
+  // the download controller directly.
+  const onExternalAbort = () => {
+    timeoutController.abort();
+  };
+  if (externalSignal) {
+    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
+  const runSetupInner = async (): Promise<InstallResult> => {
     const { configDir, modelDir, modelPath } = await getInstallPaths();
 
     // Ensure directories exist
@@ -150,7 +173,7 @@ export async function runSetup(
           percentage: p.percentage,
         });
       },
-      signal,
+      signal: timeoutController.signal,
     });
 
     // Verify installation
@@ -197,14 +220,50 @@ export async function runSetup(
       success: true,
       modelPath,
     };
+  };
+
+  try {
+    return await new Promise<InstallResult>((resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        cleanup();
+        timeoutController.abort();
+        reject(
+          new Error(
+            `Installation timed out after ${INSTALL_TIMEOUT_MS / 1000}s`
+          )
+        );
+      }, INSTALL_TIMEOUT_MS);
+
+      runSetupInner()
+        .then((result) => {
+          cleanup();
+          resolve(result);
+        })
+        .catch((err) => {
+          cleanup();
+          reject(err);
+        });
+    });
   } catch (err) {
-    // Save failed state
-    try {
-      const config = await readConfig();
-      const failedConfig = setStatus(config ?? DEFAULT_CONFIG, "setup_failed");
-      await writeConfig(failedConfig);
-    } catch {
-      // Ignore config write errors during error handling
+    // Distinguish timeout from external cancellation
+    const isTimeout =
+      err instanceof Error &&
+      err.message.includes("timed out");
+    const isAbort =
+      err instanceof Error && err.name === "AbortError";
+
+    // Save failed state unless this was an external cancellation
+    if (!isAbort) {
+      try {
+        const config = await readConfig();
+        const failedConfig = setStatus(
+          config ?? DEFAULT_CONFIG,
+          "setup_failed"
+        );
+        await writeConfig(failedConfig);
+      } catch {
+        // Ignore config write errors during error handling
+      }
     }
 
     if (err instanceof DownloadError) {
@@ -219,10 +278,21 @@ export async function runSetup(
         error: `Checksum verification failed: ${err.message}`,
       };
     }
+    if (isTimeout) {
+      return {
+        success: false,
+        error: `Installation timed out: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
     return {
       success: false,
       error: err instanceof Error ? err.message : String(err),
     };
+  } finally {
+    cleanup();
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
   }
 }
 

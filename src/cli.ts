@@ -270,28 +270,37 @@ async function inspect(
       const dirStats = await analyzeDirectory(filePath, { tree });
       const project = await detectProject(filePath);
 
-      // Check AI status for first-run prompt
-      if (!noAI && isInteractive()) {
+      // Check AI status for first-run prompt (skipped for JSON/tree output)
+      if (!noAI && isInteractive() && !json && !tree) {
         const config = await readConfig();
         const aiStatus = getAIStatus(config);
         if (aiStatus.canPrompt) {
-          const shouldSetup = await promptFirstRunAI();
+          let shouldSetup = false;
+          try {
+            shouldSetup = await promptFirstRunAI();
+          } catch {
+            // AI setup failed; continue without AI
+          }
           if (shouldSetup) {
-            const setupResult = await runSetup({
-              onProgress: (p) => {
-                if (color) {
-                  console.log(
-                    `\r\x1b[2K\x1b[32m●\x1b[0m ${p.message} (${p.percentage}%)`
-                  );
-                } else {
-                  console.log(
-                    `\r\x1b[2K${p.message} (${p.percentage}%)`
-                  );
-                }
-              },
-            });
-            if (setupResult.success) {
-              aiEnabled = true;
+            try {
+              const setupResult = await runSetup({
+                onProgress: (p) => {
+                  if (color) {
+                    console.log(
+                      `\r\x1b[2K\x1b[32m●\x1b[0m ${p.message} (${p.percentage}%)`
+                    );
+                  } else {
+                    console.log(
+                      `\r\x1b[2K${p.message} (${p.percentage}%)`
+                    );
+                  }
+                },
+              });
+              if (setupResult.success) {
+                aiEnabled = true;
+              }
+            } catch {
+              // AI setup failed; continue without AI
             }
           }
         } else {
@@ -303,7 +312,12 @@ async function inspect(
       }
 
       if (json) {
-        console.log(toJson({ entry: dirStats, explanation: { summary: "", facts: [], assumptions: [] }, project }));
+        const explainResult = explain({
+          entry: dirStats,
+          explanation: { summary: "", facts: [], assumptions: [] },
+          project,
+        });
+        console.log(toJson({ entry: dirStats, explanation: explainResult, project }));
         return;
       }
 
@@ -316,7 +330,11 @@ async function inspect(
       result = {
         entry: dirStats,
         project,
-        explanation: { summary: "", facts: [], assumptions: [] },
+        explanation: explain({
+          entry: dirStats,
+          explanation: { summary: "", facts: [], assumptions: [] },
+          project,
+        }),
       };
     } else {
       result = await inspectPath(filePath, { followSymlinks: false });
@@ -329,7 +347,7 @@ async function inspect(
           entry: {
             kind: "file",
             name: path.basename(filePath),
-            path: filePath,
+            path: path.basename(filePath),
             absolutePath: path.resolve(filePath),
             isHidden: false,
             isSymlink: false,
@@ -340,8 +358,8 @@ async function inspect(
             readable: false,
             error: {
               code: error.code ?? "UNKNOWN",
-              message: error.message,
-              path: filePath,
+              message: "Unable to access path",
+              path: path.basename(filePath),
               recoverable: error.code === "ENOENT" || error.code === "EACCES",
             },
           },
@@ -369,7 +387,7 @@ async function inspect(
   console.log(output);
 }
 
-export { main, parseArgs };
+export { main, parseArgs, promptFirstRunAI };
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);

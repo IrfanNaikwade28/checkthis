@@ -8,7 +8,7 @@ import {
   setModel,
   clearModel,
   DEFAULT_CONFIG,
-} from "../../src/ai/config.ts";
+} from "../../dist/ai/config.js";
 import { mkdtemp, writeFile, rm, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";

@@ -8,8 +8,8 @@ import {
   isSetupFailed,
   isDeclined,
   isInstalled,
-} from "../../src/ai/status.ts";
-import { createDefaultConfig } from "../../src/ai/config.ts";
+} from "../../dist/ai/status.js";
+import { createDefaultConfig } from "../../dist/ai/config.js";
 
 describe("status", () => {
   describe("getAIStatus", () => {

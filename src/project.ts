@@ -1,6 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import {
+import type {
   ProjectDetection,
   ProjectType,
   Confidence,

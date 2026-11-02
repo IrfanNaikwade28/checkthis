@@ -6,7 +6,7 @@ import {
   getExtension,
   isTextExtension,
   formatDate,
-} from "../src/utils.ts";
+} from "../dist/utils.js";
 
 describe("formatSize", () => {
   it("formats zero bytes", () => {

@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import type { Dirent } from "fs";
 import * as path from "path";
-import {
+import type {
   DirectoryStats,
   AnalyzeOptions,
   InaccessibleEntry,

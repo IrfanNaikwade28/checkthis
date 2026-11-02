@@ -4,7 +4,7 @@ import {
   inspectContent,
   MAX_READ_BYTES,
   MAX_TOTAL_CONTENT_BYTES,
-} from "../../src/ai/content.ts";
+} from "../../dist/ai/content.js";
 import { mkdtemp, writeFile, rm, stat, chmod } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";

@@ -1,6 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 
 export interface RuntimeInfo {
   name: string;
@@ -63,22 +63,70 @@ export async function findRuntimeInPath(): Promise<string | null> {
   return null;
 }
 
+export type SpawnFn = (
+  command: string,
+  args: string[],
+  options?: object
+) => ChildProcess;
+
 export async function getRuntimeVersion(
-  runtimePath: string
+  runtimePath: string,
+  spawnFn: SpawnFn = spawn
 ): Promise<string | null> {
   try {
     const { stdout } = await new Promise<{ stdout: string; stderr: string }>(
       (resolve, reject) => {
-        const proc = spawn(runtimePath, ["--help"], { timeout: 5000 });
+        const proc = spawnFn(runtimePath, ["--help"]);
         let stdout = "";
         let stderr = "";
-        proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-        proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-        proc.on("close", (code) => {
-          if (code === 0) resolve({ stdout, stderr });
-          else reject(new Error(`Exit code ${code}: ${stderr}`));
-        });
-        proc.on("error", reject);
+        let settled = false;
+        let timeoutId: NodeJS.Timeout | undefined = undefined;
+
+        const cleanup = () => {
+          if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+            timeoutId = undefined;
+          }
+        };
+
+        const onClose = (code: number | null) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (code === 0) {
+            resolve({ stdout, stderr });
+          } else {
+            reject(new Error(`Exit code ${code}: ${stderr}`));
+          }
+        };
+
+        const onError = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(err);
+        };
+
+        proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
+        proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+        proc.on("close", onClose);
+        proc.on("error", onError);
+
+        timeoutId = setTimeout(() => {
+          if (settled) return;
+          proc.kill("SIGTERM");
+          setTimeout(() => {
+            if (!settled) {
+              proc.kill("SIGKILL");
+            }
+          }, 2000).unref();
+          settled = true;
+          clearTimeout(timeoutId);
+          timeoutId = undefined;
+          proc.removeListener("close", onClose);
+          proc.removeListener("error", onError);
+          reject(new Error("Runtime version detection timed out"));
+        }, 5000);
       }
     );
     // llama-cli --help outputs version info in the first few lines

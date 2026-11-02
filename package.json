@@ -23,6 +23,7 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
+    "pretest": "npm run build",
     "test": "node --test",
     "prepare": "npm run build"
   },

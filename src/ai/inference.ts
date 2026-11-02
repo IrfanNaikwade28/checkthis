@@ -96,7 +96,7 @@ export class LlamaCppProvider implements AIProvider {
         } catch {
           // Ignore errors during force kill
         }
-      }, 2000);
+      }, 2000).unref();
     };
 
     abortController.signal.addEventListener("abort", killProc);

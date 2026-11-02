@@ -263,11 +263,20 @@ export async function inspectContent(filePath: string): Promise<ContentInspectio
         result.reason = "not a regular file";
         return result;
       }
+
+      // Symlink race detection: compare lstat and fstat inodes.
+      // If the path was replaced with a symlink between lstat and open,
+      // the opened descriptor refers to a different file (different inode).
+      if (stat.dev !== fdStat.dev || stat.ino !== fdStat.ino) {
+        result.reason = "symlink race detected";
+        return result;
+      }
+
       result.size = fdStat.size;
 
       const buf = Buffer.alloc(MAX_READ_BYTES);
       const { bytesRead } = await fd.read(buf, 0, MAX_READ_BYTES, 0);
-      const contentBuf = buf.slice(0, bytesRead);
+      let contentBuf = buf.slice(0, bytesRead);
 
       // Binary detection: null byte.
       if (containsNullByte(contentBuf)) {
@@ -276,11 +285,28 @@ export async function inspectContent(filePath: string): Promise<ContentInspectio
         return result;
       }
 
-      // Strict UTF-8 validation.
+      // Strict UTF-8 validation. When the bounded read ends in the middle
+      // of a multibyte character, trim to the last complete character
+      // instead of rejecting the file as binary (provided there is more
+      // data to read).
       if (!isValidUtf8(contentBuf)) {
-        result.isBinary = true;
-        result.reason = "invalid UTF-8";
-        return result;
+        if (bytesRead === MAX_READ_BYTES && stat.size > MAX_READ_BYTES) {
+          // Find the longest valid UTF-8 prefix.
+          let validEnd = bytesRead;
+          while (validEnd > 0 && !isValidUtf8(buf.slice(0, validEnd))) {
+            validEnd--;
+          }
+          if (validEnd === 0) {
+            result.isBinary = true;
+            result.reason = "invalid UTF-8";
+            return result;
+          }
+          contentBuf = buf.slice(0, validEnd);
+        } else {
+          result.isBinary = true;
+          result.reason = "invalid UTF-8";
+          return result;
+        }
       }
 
       // Check supported extension only after confirming it's text.
@@ -289,7 +315,7 @@ export async function inspectContent(filePath: string): Promise<ContentInspectio
         return result;
       }
 
-      content = buf.slice(0, bytesRead).toString("utf8");
+      content = contentBuf.toString("utf8");
       truncated = bytesRead === MAX_READ_BYTES && stat.size > MAX_READ_BYTES;
 
       // Redact secrets.

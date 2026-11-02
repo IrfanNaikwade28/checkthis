@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import type { Stats } from "fs";
 import * as path from "path";
-import {
+import type {
   FileInspection,
   DirectoryStats,
   InspectPathResult,
